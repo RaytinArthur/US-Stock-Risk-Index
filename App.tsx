@@ -112,6 +112,12 @@ const App: React.FC = () => {
                 Live Data
               </div>
             </div>
+            {data?.sources?.[0]?.title?.includes('rate limited') && (
+              <div className="hidden md:flex items-center gap-2 text-[10px] text-amber-400 uppercase tracking-widest font-semibold">
+                <Info className="w-3 h-3" />
+                Gemini API rate limited — showing cached data
+              </div>
+            )}
             <div className="flex items-center gap-4">
               <div className="hidden sm:flex flex-col items-end text-[10px] text-slate-400 uppercase tracking-tighter">
                 <span>Last Scan</span>
