@@ -15,36 +15,28 @@ export const fetchRealMarketData = async (): Promise<RiskData> => {
     return buildFallbackData("Missing Gemini API key. Using cached baseline metrics.");
   }
 
-  let response;
-  try {
-    response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Retrieve the most recent values for these 6 US market indicators. 
-      Return ONLY a JSON-like structure (but as plain text) with these fields:
-      1. VIX Index
-      2. 10-Year minus 2-Year Treasury Yield Spread (T10Y2Y)
-      3. ICE BofA US High Yield Index Option-Adjusted Spread (OAS)
-      4. S&P 500 Forward P/E Ratio
-      5. CBOE Equity Put/Call Ratio
-      6. TED Spread
-      
-      Format your response like this exactly for parsing:
-      VIX: [value]
-      T10Y2Y: [value]
-      HY_OAS: [value]
-      PE_RATIO: [value]
-      PUT_CALL: [value]
-      TED: [value]`,
-      config: {
-        tools: [{ googleSearch: {} }],
-      },
-    });
-  } catch (error) {
-    console.error("Gemini request failed:", error);
-    return buildFallbackData(
-      "Gemini API rate limited or unavailable. Showing cached baseline metrics."
-    );
-  }
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Retrieve the most recent values for these 6 US market indicators. 
+    Return ONLY a JSON-like structure (but as plain text) with these fields:
+    1. VIX Index
+    2. 10-Year minus 2-Year Treasury Yield Spread (T10Y2Y)
+    3. ICE BofA US High Yield Index Option-Adjusted Spread (OAS)
+    4. S&P 500 Forward P/E Ratio
+    5. CBOE Equity Put/Call Ratio
+    6. TED Spread
+    
+    Format your response like this exactly for parsing:
+    VIX: [value]
+    T10Y2Y: [value]
+    HY_OAS: [value]
+    PE_RATIO: [value]
+    PUT_CALL: [value]
+    TED: [value]`,
+    config: {
+      tools: [{ googleSearch: {} }],
+    },
+  });
 
   const text = response.text;
   const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks
