@@ -4,6 +4,31 @@ import { RiskData, Indicator } from "../types";
 
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+const RATE_LIMIT_STORAGE_KEY = 'gemini_rate_limit_until';
+const RATE_LIMIT_COOLDOWN_MS = 15 * 60 * 1000;
+
+const getStoredRateLimitUntil = (): number | null => {
+  if (typeof window === 'undefined') return null;
+  const raw = window.localStorage.getItem(RATE_LIMIT_STORAGE_KEY);
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+const setStoredRateLimitUntil = (until: number) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(RATE_LIMIT_STORAGE_KEY, String(until));
+};
+
+export const isGeminiRateLimited = (): boolean => {
+  const until = getStoredRateLimitUntil();
+  if (!until) return false;
+  return Date.now() < until;
+};
+
+export const recordGeminiRateLimit = () => {
+  setStoredRateLimitUntil(Date.now() + RATE_LIMIT_COOLDOWN_MS);
+};
 
 const MOCK_HISTORY = (val: number) => Array.from({ length: 30 }, (_, i) => ({
   date: new Date(Date.now() - (30 - i) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -14,29 +39,43 @@ export const fetchRealMarketData = async (): Promise<RiskData> => {
   if (!ai) {
     return buildFallbackData("Missing Gemini API key. Using cached baseline metrics.");
   }
+  if (isGeminiRateLimited()) {
+    return buildFallbackData("Gemini API rate limited. Showing cached baseline metrics.");
+  }
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Retrieve the most recent values for these 6 US market indicators. 
-    Return ONLY a JSON-like structure (but as plain text) with these fields:
-    1. VIX Index
-    2. 10-Year minus 2-Year Treasury Yield Spread (T10Y2Y)
-    3. ICE BofA US High Yield Index Option-Adjusted Spread (OAS)
-    4. S&P 500 Forward P/E Ratio
-    5. CBOE Equity Put/Call Ratio
-    6. TED Spread
-    
-    Format your response like this exactly for parsing:
-    VIX: [value]
-    T10Y2Y: [value]
-    HY_OAS: [value]
-    PE_RATIO: [value]
-    PUT_CALL: [value]
-    TED: [value]`,
-    config: {
-      tools: [{ googleSearch: {} }],
-    },
-  });
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Retrieve the most recent values for these 6 US market indicators. 
+      Return ONLY a JSON-like structure (but as plain text) with these fields:
+      1. VIX Index
+      2. 10-Year minus 2-Year Treasury Yield Spread (T10Y2Y)
+      3. ICE BofA US High Yield Index Option-Adjusted Spread (OAS)
+      4. S&P 500 Forward P/E Ratio
+      5. CBOE Equity Put/Call Ratio
+      6. TED Spread
+      
+      Format your response like this exactly for parsing:
+      VIX: [value]
+      T10Y2Y: [value]
+      HY_OAS: [value]
+      PE_RATIO: [value]
+      PUT_CALL: [value]
+      TED: [value]`,
+      config: {
+        tools: [{ googleSearch: {} }],
+      },
+    });
+  } catch (error) {
+    console.error("Gemini request failed:", error);
+    if (String(error).includes('429')) {
+      recordGeminiRateLimit();
+    }
+    return buildFallbackData(
+      "Gemini API rate limited or unavailable. Showing cached baseline metrics."
+    );
+  }
 
   const text = response.text;
   const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks

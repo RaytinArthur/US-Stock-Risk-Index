@@ -11,7 +11,7 @@ import {
   ShieldCheck,
   Search
 } from 'lucide-react';
-import { fetchRealMarketData } from './services/marketService';
+import { fetchRealMarketData, isGeminiRateLimited, recordGeminiRateLimit } from './services/marketService';
 import { RiskData, RiskLevel } from './types';
 import { RISK_THRESHOLDS, CATEGORIES } from './constants';
 import RiskGauge from './components/RiskGauge';
@@ -59,6 +59,10 @@ const App: React.FC = () => {
 
   const runAiAnalysis = async () => {
     if (!data || !hasAiKey) return;
+    if (isGeminiRateLimited()) {
+      setAiAnalysis("Gemini API rate limited. Please retry later.");
+      return;
+    }
     setIsAnalyzing(true);
     try {
       const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
@@ -79,6 +83,11 @@ const App: React.FC = () => {
       setAiAnalysis(response.text || "Analysis unavailable.");
     } catch (error) {
       console.error("AI Analysis failed:", error);
+      if (String(error).includes('429')) {
+        recordGeminiRateLimit();
+        setAiAnalysis("Gemini API rate limited. Please retry later.");
+        return;
+      }
       setAiAnalysis("Error generating AI insights. Please try again.");
     } finally {
       setIsAnalyzing(false);
