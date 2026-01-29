@@ -2,7 +2,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { RiskData, Indicator } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 const MOCK_HISTORY = (val: number) => Array.from({ length: 30 }, (_, i) => ({
   date: new Date(Date.now() - (30 - i) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -10,6 +11,10 @@ const MOCK_HISTORY = (val: number) => Array.from({ length: 30 }, (_, i) => ({
 }));
 
 export const fetchRealMarketData = async (): Promise<RiskData> => {
+  if (!ai) {
+    return buildFallbackData("Missing Gemini API key. Using cached baseline metrics.");
+  }
+
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: `Retrieve the most recent values for these 6 US market indicators. 
@@ -142,6 +147,10 @@ export const fetchRealMarketData = async (): Promise<RiskData> => {
     }
   ];
 
+  return buildRiskPayload(indicators, sources);
+};
+
+const buildRiskPayload = (indicators: Indicator[], sources: { title: string; uri: string }[]): RiskData => {
   const totalScore = Math.round(indicators.reduce((acc, ind) => acc + (ind.subScore * ind.weight), 0));
   const contributions = indicators
     .map(ind => ({ id: ind.id, name: ind.name, impact: ind.subScore * ind.weight }))
@@ -153,5 +162,98 @@ export const fetchRealMarketData = async (): Promise<RiskData> => {
     indicators,
     contributions,
     sources
+  };
+};
+
+const buildFallbackData = (note: string): RiskData => {
+  const indicators: Indicator[] = [
+    {
+      id: 'vix',
+      name: 'VIX (Fear Index)',
+      category: 'Volatility',
+      value: 16.2,
+      unit: '',
+      direction: 'higher_is_risky',
+      description: 'Market expectation of 30-day forward volatility.',
+      weight: 0.25,
+      history: MOCK_HISTORY(16.2),
+      subScore: 20,
+      explanation: 'Fallback data when live metrics are unavailable.'
+    },
+    {
+      id: 'yield-curve',
+      name: '10Y-2Y Yield Spread',
+      category: 'Macro',
+      value: 0.2,
+      unit: '%',
+      direction: 'lower_is_risky',
+      description: 'Difference between long and short term yields.',
+      weight: 0.15,
+      history: MOCK_HISTORY(0.2),
+      subScore: 50,
+      explanation: 'Fallback data when live metrics are unavailable.'
+    },
+    {
+      id: 'hy-spread',
+      name: 'High Yield OAS',
+      category: 'Credit/Stress',
+      value: 3.5,
+      unit: '%',
+      direction: 'higher_is_risky',
+      description: 'Risk premium on "junk" bonds.',
+      weight: 0.20,
+      history: MOCK_HISTORY(3.5),
+      subScore: 30,
+      explanation: 'Fallback data when live metrics are unavailable.'
+    },
+    {
+      id: 'pe-ratio',
+      name: 'Forward P/E Ratio',
+      category: 'Valuation',
+      value: 20.8,
+      unit: 'x',
+      direction: 'higher_is_risky',
+      description: 'Price relative to next 12m earnings.',
+      weight: 0.20,
+      history: MOCK_HISTORY(20.8),
+      subScore: 55,
+      explanation: 'Fallback data when live metrics are unavailable.'
+    },
+    {
+      id: 'put-call',
+      name: 'Put/Call Ratio',
+      category: 'Volatility',
+      value: 0.9,
+      unit: '',
+      direction: 'higher_is_risky',
+      description: 'Options volume ratio.',
+      weight: 0.10,
+      history: MOCK_HISTORY(0.9),
+      subScore: 45,
+      explanation: 'Fallback data when live metrics are unavailable.'
+    },
+    {
+      id: 'ted-spread',
+      name: 'TED Spread',
+      category: 'Liquidity',
+      value: 0.25,
+      unit: '%',
+      direction: 'higher_is_risky',
+      description: 'Interbank credit risk measure.',
+      weight: 0.10,
+      history: MOCK_HISTORY(0.25),
+      subScore: 35,
+      explanation: 'Fallback data when live metrics are unavailable.'
+    }
+  ];
+
+  return {
+    ...buildRiskPayload(indicators, []),
+    sources: [
+      {
+        title: note,
+        uri: 'https://vercel.com/docs/projects/environment-variables'
+      }
+    ]
   };
 };

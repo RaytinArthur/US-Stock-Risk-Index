@@ -25,6 +25,7 @@ const App: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const hasAiKey = Boolean(import.meta.env.VITE_GEMINI_API_KEY);
 
   useEffect(() => {
     refreshData();
@@ -57,10 +58,10 @@ const App: React.FC = () => {
   }, [data, activeCategory]);
 
   const runAiAnalysis = async () => {
-    if (!data) return;
+    if (!data || !hasAiKey) return;
     setIsAnalyzing(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
       const prompt = `Based on these LIVE real-time market metrics fetched via Google Search:
       Total Risk Score: ${data.totalScore}/100
       Status: ${currentStatus?.level}
@@ -167,10 +168,10 @@ const App: React.FC = () => {
                   {!aiAnalysis && (
                     <button 
                       onClick={runAiAnalysis}
-                      disabled={isAnalyzing}
+                      disabled={isAnalyzing || !hasAiKey}
                       className="text-[10px] bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition-all"
                     >
-                      {isAnalyzing ? 'Analyzing...' : 'Generate Insight'}
+                      {isAnalyzing ? 'Analyzing...' : hasAiKey ? 'Generate Insight' : 'Configure API Key'}
                     </button>
                   )}
                 </div>
@@ -183,6 +184,8 @@ const App: React.FC = () => {
                       <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:0.2s]" />
                       <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:0.4s]" />
                     </div>
+                  ) : !hasAiKey ? (
+                    "Set VITE_GEMINI_API_KEY in your Vercel environment to enable AI insights."
                   ) : (
                     "Fetch latest insights to see how current volatility spikes or yield curves affect your portfolio risk."
                   )}
