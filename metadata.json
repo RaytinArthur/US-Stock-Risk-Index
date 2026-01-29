@@ -1,0 +1,5 @@
+{
+  "name": "US Stock Risk Index",
+  "description": "A comprehensive real-time dashboard monitoring US market risk using volatility, credit spreads, yield curves, and valuation metrics with AI-powered analysis.",
+  "requestFramePermissions": []
+}
