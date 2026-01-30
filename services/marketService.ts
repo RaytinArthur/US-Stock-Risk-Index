@@ -267,6 +267,8 @@ type FredSeriesResult = {
   sources?: { title: string; uri: string }[];
 };
 
+const PROXY_PREFIX = 'https://r.jina.ai/http://';
+
 const buildFredUrl = (seriesId: string, limit: number) => {
   const params = new URLSearchParams({
     series_id: seriesId,
@@ -280,6 +282,32 @@ const buildFredUrl = (seriesId: string, limit: number) => {
   return `https://api.stlouisfed.org/fred/series/observations?${params.toString()}`;
 };
 
+const extractJsonPayload = (text: string): unknown => {
+  const start = text.indexOf('{');
+  if (start === -1) {
+    throw new Error('No JSON payload detected');
+  }
+  return JSON.parse(text.slice(start));
+};
+
+const fetchJsonWithProxy = async (url: string): Promise<unknown> => {
+  try {
+    const response = await fetch(url);
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch (error) {
+    console.warn('Direct fetch failed, falling back to proxy', error);
+  }
+
+  const proxiedResponse = await fetch(`${PROXY_PREFIX}${url}`);
+  if (!proxiedResponse.ok) {
+    throw new Error(`Proxy request failed for ${url}`);
+  }
+  const text = await proxiedResponse.text();
+  return extractJsonPayload(text);
+};
+
 const parseObservationValue = (value: string): number | null => {
   const num = Number(value);
   return Number.isNaN(num) ? null : num;
@@ -287,11 +315,7 @@ const parseObservationValue = (value: string): number | null => {
 
 const fetchFredSeries = async (seriesId: string, fallbackValue: number): Promise<FredSeriesResult> => {
   try {
-    const response = await fetch(buildFredUrl(seriesId, 30));
-    if (!response.ok) {
-      throw new Error(`FRED request failed for ${seriesId}`);
-    }
-    const data = await response.json();
+    const data = await fetchJsonWithProxy(buildFredUrl(seriesId, 30));
     const observations = Array.isArray(data.observations) ? data.observations : [];
     const validObservations = observations
       .map((obs: { date: string; value: string }) => ({
@@ -325,24 +349,15 @@ const fetchFredSeries = async (seriesId: string, fallbackValue: number): Promise
   }
 };
 
-const VIX_PROXY_PREFIX = 'https://r.jina.ai/http://';
 const VIX_YAHOO_URL = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=%5EVIX';
 const VIX_STOOQ_URL = 'https://stooq.com/q/l/?s=^vix&f=sd2t2ohlcv&h&e=csv';
 
-const extractJsonPayload = (text: string): unknown => {
-  const start = text.indexOf('{');
-  if (start === -1) {
-    throw new Error('No JSON payload detected');
-  }
-  return JSON.parse(text.slice(start));
-};
-
-const parseYahooVix = (text: string): number | null => {
+const parseYahooVixPayload = (payload: unknown): number | null => {
   try {
-    const payload = extractJsonPayload(text) as {
+    const data = payload as {
       quoteResponse?: { result?: { regularMarketPrice?: number }[] };
     };
-    const price = payload.quoteResponse?.result?.[0]?.regularMarketPrice;
+    const price = data.quoteResponse?.result?.[0]?.regularMarketPrice;
     return typeof price === 'number' ? price : null;
   } catch (error) {
     console.warn('Failed to parse Yahoo VIX response', error);
@@ -367,23 +382,20 @@ const parseStooqVix = (text: string): number | null => {
 
 const fetchRealtimeVix = async (): Promise<{ value: number; source: { title: string; uri: string } } | null> => {
   try {
-    const response = await fetch(`${VIX_PROXY_PREFIX}${VIX_YAHOO_URL}`);
-    if (response.ok) {
-      const text = await response.text();
-      const value = parseYahooVix(text);
-      if (value !== null) {
-        return {
-          value,
-          source: { title: 'Yahoo Finance: CBOE VIX (near real-time)', uri: VIX_YAHOO_URL }
-        };
-      }
+    const payload = await fetchJsonWithProxy(VIX_YAHOO_URL);
+    const value = parseYahooVixPayload(payload);
+    if (value !== null) {
+      return {
+        value,
+        source: { title: 'Yahoo Finance: CBOE VIX (near real-time)', uri: VIX_YAHOO_URL }
+      };
     }
   } catch (error) {
     console.warn('Yahoo VIX fetch failed', error);
   }
 
   try {
-    const response = await fetch(`${VIX_PROXY_PREFIX}${VIX_STOOQ_URL}`);
+    const response = await fetch(`${PROXY_PREFIX}${VIX_STOOQ_URL}`);
     if (!response.ok) {
       return null;
     }
