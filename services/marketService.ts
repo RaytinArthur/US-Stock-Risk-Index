@@ -19,19 +19,32 @@ export const fetchRealMarketData = async (): Promise<RiskData> => {
   ];
 
   const results = await Promise.all(
-    seriesConfigs.map(async (config) => ({
-      config,
-      ...(await fetchFredSeries(config.seriesId, config.fallback))
-    }))
+    seriesConfigs.map(async (config) => {
+      if (config.key === 'vix') {
+        return {
+          config,
+          ...(await fetchVixSeries(config.seriesId, config.fallback))
+        };
+      }
+
+      const result = await fetchFredSeries(config.seriesId, config.fallback);
+      return {
+        config,
+        ...result,
+        sources: result.failed
+          ? []
+          : [
+              {
+                title: `FRED: ${config.label}`,
+                uri: `https://fred.stlouisfed.org/series/${config.seriesId}`
+              }
+            ]
+      };
+    })
   );
 
   const failedSeries = results.filter(result => result.failed).map(result => result.config.label);
-  const sources = results
-    .filter(result => !result.failed)
-    .map(result => ({
-      title: `FRED: ${result.config.label}`,
-      uri: `https://fred.stlouisfed.org/series/${result.config.seriesId}`
-    }));
+  const sources = results.flatMap(result => result.sources ?? []);
 
   if (sources.length === 0) {
     return buildFallbackData("FRED API unavailable. Showing cached baseline metrics.");
@@ -251,7 +264,10 @@ type FredSeriesResult = {
   value: number;
   history: { date: string; value: number }[];
   failed: boolean;
+  sources?: { title: string; uri: string }[];
 };
+
+const PROXY_PREFIX = 'https://r.jina.ai/http://';
 
 const buildFredUrl = (seriesId: string, limit: number) => {
   const params = new URLSearchParams({
@@ -266,6 +282,32 @@ const buildFredUrl = (seriesId: string, limit: number) => {
   return `https://api.stlouisfed.org/fred/series/observations?${params.toString()}`;
 };
 
+const extractJsonPayload = (text: string): unknown => {
+  const start = text.indexOf('{');
+  if (start === -1) {
+    throw new Error('No JSON payload detected');
+  }
+  return JSON.parse(text.slice(start));
+};
+
+const fetchJsonWithProxy = async (url: string): Promise<unknown> => {
+  try {
+    const response = await fetch(url);
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch (error) {
+    console.warn('Direct fetch failed, falling back to proxy', error);
+  }
+
+  const proxiedResponse = await fetch(`${PROXY_PREFIX}${url}`);
+  if (!proxiedResponse.ok) {
+    throw new Error(`Proxy request failed for ${url}`);
+  }
+  const text = await proxiedResponse.text();
+  return extractJsonPayload(text);
+};
+
 const parseObservationValue = (value: string): number | null => {
   const num = Number(value);
   return Number.isNaN(num) ? null : num;
@@ -273,11 +315,7 @@ const parseObservationValue = (value: string): number | null => {
 
 const fetchFredSeries = async (seriesId: string, fallbackValue: number): Promise<FredSeriesResult> => {
   try {
-    const response = await fetch(buildFredUrl(seriesId, 30));
-    if (!response.ok) {
-      throw new Error(`FRED request failed for ${seriesId}`);
-    }
-    const data = await response.json();
+    const data = await fetchJsonWithProxy(buildFredUrl(seriesId, 30));
     const observations = Array.isArray(data.observations) ? data.observations : [];
     const validObservations = observations
       .map((obs: { date: string; value: string }) => ({
@@ -309,4 +347,97 @@ const fetchFredSeries = async (seriesId: string, fallbackValue: number): Promise
       failed: true
     };
   }
+};
+
+const VIX_YAHOO_URL = 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=%5EVIX';
+const VIX_STOOQ_URL = 'https://stooq.com/q/l/?s=^vix&f=sd2t2ohlcv&h&e=csv';
+
+const parseYahooVixPayload = (payload: unknown): number | null => {
+  try {
+    const data = payload as {
+      quoteResponse?: { result?: { regularMarketPrice?: number }[] };
+    };
+    const price = data.quoteResponse?.result?.[0]?.regularMarketPrice;
+    return typeof price === 'number' ? price : null;
+  } catch (error) {
+    console.warn('Failed to parse Yahoo VIX response', error);
+    return null;
+  }
+};
+
+const parseStooqVix = (text: string): number | null => {
+  const lines = text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) {
+    return null;
+  }
+  const dataLine = lines[lines.length - 1];
+  const columns = dataLine.split(',');
+  const closeValue = columns[4];
+  const parsed = Number(closeValue);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+const fetchRealtimeVix = async (): Promise<{ value: number; source: { title: string; uri: string } } | null> => {
+  try {
+    const payload = await fetchJsonWithProxy(VIX_YAHOO_URL);
+    const value = parseYahooVixPayload(payload);
+    if (value !== null) {
+      return {
+        value,
+        source: { title: 'Yahoo Finance: CBOE VIX (near real-time)', uri: VIX_YAHOO_URL }
+      };
+    }
+  } catch (error) {
+    console.warn('Yahoo VIX fetch failed', error);
+  }
+
+  try {
+    const response = await fetch(`${PROXY_PREFIX}${VIX_STOOQ_URL}`);
+    if (!response.ok) {
+      return null;
+    }
+    const text = await response.text();
+    const value = parseStooqVix(text);
+    if (value === null) {
+      return null;
+    }
+    return {
+      value,
+      source: { title: 'Stooq: CBOE VIX (delayed)', uri: VIX_STOOQ_URL }
+    };
+  } catch (error) {
+    console.warn('Stooq VIX fetch failed', error);
+    return null;
+  }
+};
+
+const fetchVixSeries = async (seriesId: string, fallbackValue: number): Promise<FredSeriesResult> => {
+  const [fredResult, realtimeVix] = await Promise.all([
+    fetchFredSeries(seriesId, fallbackValue),
+    fetchRealtimeVix()
+  ]);
+
+  const value = realtimeVix?.value ?? fredResult.value;
+  const sources: { title: string; uri: string }[] = [];
+
+  if (!fredResult.failed) {
+    sources.push({
+      title: 'FRED: CBOE Volatility Index (VIX)',
+      uri: `https://fred.stlouisfed.org/series/${seriesId}`
+    });
+  }
+
+  if (realtimeVix) {
+    sources.push(realtimeVix.source);
+  }
+
+  return {
+    value,
+    history: fredResult.failed ? MOCK_HISTORY(value) : fredResult.history,
+    failed: fredResult.failed && !realtimeVix,
+    sources
+  };
 };
