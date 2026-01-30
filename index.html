@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>US Stock Risk Index</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">US Stock Risk Index</p>
+          <h1 class="title">Risk Score</h1>
+          <div class="score">
+            <span id="risk-score">--</span>
+            <span class="score-total">/100</span>
+          </div>
+          <p id="risk-status" class="status">Loading...</p>
+          <p id="last-updated" class="updated">Last updated: --</p>
+          <p id="data-warning" class="warning" hidden>
+            Data fetch failed. Showing last successful update with a degraded experience.
+          </p>
+        </div>
+        <div class="gauge" aria-hidden="true">
+          <div class="gauge-arc">
+            <div class="segment low"></div>
+            <div class="segment guard"></div>
+            <div class="segment medium"></div>
+            <div class="segment guard"></div>
+            <div class="segment elevated"></div>
+            <div class="segment guard"></div>
+            <div class="segment high"></div>
+            <div class="segment guard"></div>
+            <div class="segment extreme"></div>
+          </div>
+          <div class="needle" id="needle"></div>
+        </div>
+      </section>
+
+      <section class="tabs">
+        <button class="tab active" data-category="all">All Indicators</button>
+        <button class="tab" data-category="volatility">Volatility</button>
+        <button class="tab" data-category="credit">Credit/Stress</button>
+        <button class="tab" data-category="rates">Rates</button>
+        <button class="tab" data-category="liquidity">Liquidity</button>
+      </section>
+
+      <section class="cards" id="indicator-cards"></section>
+
+      <section class="explain">
+        <div>
+          <h2>Explainability</h2>
+          <p class="muted">Top contributors to today’s score.</p>
+          <ul id="top-contributors" class="contributors"></ul>
+        </div>
+        <details class="weights">
+          <summary>Model weights</summary>
+          <div id="weights-table" class="weights-table"></div>
+        </details>
+      </section>
+
+      <section class="disclaimer">
+        <p>
+          Disclaimer: This page is for informational purposes only and does not constitute
+          investment advice.
+        </p>
+        <p class="sources">Data sources: FRED, Cboe (manual refresh).</p>
+      </section>
+    </main>
+    <script type="application/json" id="risk-data">
+      {
+        "modelVersion": "v1",
+        "rawScore": 67,
+        "smoothedScore": 64,
+        "updatedAt": "2026-01-29T10:00:00.000Z",
+        "timezone": "Asia/Singapore",
+        "historyStart": "2016-01-29",
+        "indicators": [
+          {
+            "id": "vix",
+            "name": "VIX",
+            "source": "Cboe",
+            "seriesId": "VIXCLS",
+            "direction": "higher_risk",
+            "weight": 0.25,
+            "latestDate": "2026-01-28",
+            "latestValue": 22.1,
+            "percentile": 0.66,
+            "subScore": 66,
+            "contribution": 16.5
+          },
+          {
+            "id": "credit_spread",
+            "name": "BAA-AAA Credit Spread",
+            "source": "FRED",
+            "seriesId": "BAA10Y",
+            "direction": "higher_risk",
+            "weight": 0.2,
+            "latestDate": "2026-01-27",
+            "latestValue": 1.82,
+            "percentile": 0.64,
+            "subScore": 64,
+            "contribution": 12.8
+          },
+          {
+            "id": "yield_curve",
+            "name": "10Y-2Y Yield Curve",
+            "source": "FRED",
+            "seriesId": "T10Y2Y",
+            "direction": "lower_risk",
+            "weight": 0.15,
+            "latestDate": "2026-01-28",
+            "latestValue": -0.18,
+            "percentile": 0.82,
+            "subScore": 18,
+            "contribution": 2.7
+          },
+          {
+            "id": "real_rate",
+            "name": "10Y Real Rate",
+            "source": "FRED",
+            "seriesId": "DFII10",
+            "direction": "higher_risk",
+            "weight": 0.2,
+            "latestDate": "2026-01-28",
+            "latestValue": 1.7,
+            "percentile": 0.74,
+            "subScore": 74,
+            "contribution": 14.8
+          },
+          {
+            "id": "financial_conditions",
+            "name": "Chicago Fed NFCI",
+            "source": "FRED",
+            "seriesId": "NFCI",
+            "direction": "higher_risk",
+            "weight": 0.2,
+            "latestDate": "2026-01-24",
+            "latestValue": -0.21,
+            "percentile": 0.38,
+            "subScore": 38,
+            "contribution": 7.6
+          }
+        ]
+      }
+    </script>
+    <script type="module" src="script.js"></script>
+  </body>
+</html>
