@@ -11,12 +11,11 @@ import {
   ShieldCheck,
   Search
 } from 'lucide-react';
-import { fetchRealMarketData, isGeminiRateLimited, recordGeminiRateLimit } from './services/marketService';
-import { RiskData, RiskLevel } from './types';
+import { fetchRealMarketData } from './services/marketService';
+import { RiskData } from './types';
 import { RISK_THRESHOLDS, CATEGORIES } from './constants';
 import RiskGauge from './components/RiskGauge';
 import IndicatorCard from './components/IndicatorCard';
-import { GoogleGenAI } from '@google/genai';
 
 const App: React.FC = () => {
   const [data, setData] = useState<RiskData | null>(null);
@@ -25,7 +24,7 @@ const App: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const hasAiKey = Boolean(import.meta.env.VITE_GEMINI_API_KEY);
+  const hasAiKey = Boolean(import.meta.env.VITE_OPENAI_API_KEY);
 
   useEffect(() => {
     refreshData();
@@ -59,35 +58,42 @@ const App: React.FC = () => {
 
   const runAiAnalysis = async () => {
     if (!data || !hasAiKey) return;
-    if (isGeminiRateLimited()) {
-      setAiAnalysis("Gemini API rate limited. Please retry later.");
-      return;
-    }
     setIsAnalyzing(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-      const prompt = `Based on these LIVE real-time market metrics fetched via Google Search:
-      Total Risk Score: ${data.totalScore}/100
-      Status: ${currentStatus?.level}
-      
-      Live Metrics:
-      ${data.indicators.map(ind => `- ${ind.name}: ${ind.value}${ind.unit} (Sub-score: ${ind.subScore}/100)`).join('\n')}
-      
-      Write a professional 3-sentence summary highlighting the primary risk driver and the immediate outlook for US equities.`;
-      
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt
+      const prompt = `Based on these latest market metrics from FRED:
+Total Risk Score: ${data.totalScore}/100
+Status: ${currentStatus?.level}
+
+Live Metrics:
+${data.indicators.map(ind => `- ${ind.name}: ${ind.value}${ind.unit} (Sub-score: ${ind.subScore}/100)`).join('\n')}
+
+Write a professional 3-sentence summary highlighting the primary risk driver and the immediate outlook for US equities.`;
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4.1-mini',
+          messages: [
+            { role: 'system', content: 'You are a professional market strategist.' },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.4
+        })
       });
-      
-      setAiAnalysis(response.text || "Analysis unavailable.");
+
+      if (!response.ok) {
+        throw new Error(`OpenAI request failed: ${response.status}`);
+      }
+
+      const payload = await response.json();
+      const message = payload.choices?.[0]?.message?.content?.trim();
+      setAiAnalysis(message || "Analysis unavailable.");
     } catch (error) {
       console.error("AI Analysis failed:", error);
-      if (String(error).includes('429')) {
-        recordGeminiRateLimit();
-        setAiAnalysis("Gemini API rate limited. Please retry later.");
-        return;
-      }
       setAiAnalysis("Error generating AI insights. Please try again.");
     } finally {
       setIsAnalyzing(false);
@@ -98,7 +104,7 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
         <RefreshCw className="w-12 h-12 text-blue-500 animate-spin mb-4" />
-        <p className="text-slate-400 font-medium animate-pulse">Scanning live market data via Google Search...</p>
+        <p className="text-slate-400 font-medium animate-pulse">Scanning live market data via FRED...</p>
       </div>
     );
   }
@@ -121,10 +127,10 @@ const App: React.FC = () => {
                 Live Data
               </div>
             </div>
-            {data?.sources?.[0]?.title?.includes('rate limited') && (
+            {data?.sources?.[0]?.title?.includes('cached baseline') && (
               <div className="hidden md:flex items-center gap-2 text-[10px] text-amber-400 uppercase tracking-widest font-semibold">
                 <Info className="w-3 h-3" />
-                Gemini API rate limited — showing cached data
+                Live data partially unavailable — showing cached baselines
               </div>
             )}
             <div className="flex items-center gap-4">
@@ -149,7 +155,7 @@ const App: React.FC = () => {
         <section className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl border border-slate-700/50 overflow-hidden mb-12 shadow-2xl relative">
           <div className="absolute top-4 right-6 flex items-center gap-2 text-[10px] text-slate-500 font-bold uppercase tracking-widest">
             <ShieldCheck className="w-3 h-3 text-blue-500" />
-            AI Verified Indicators
+            FRED-Verified Indicators
           </div>
           
           <div className="grid md:grid-cols-2 gap-8 p-8 md:p-12 items-center">
@@ -170,7 +176,7 @@ const App: React.FC = () => {
                 <h2 className="text-3xl font-bold text-white mb-2">Live Risk Pulse</h2>
                 <p className="text-slate-400 leading-relaxed text-sm md:text-base">
                   Current aggregate risk is <span className="text-white font-bold">{data!.totalScore}/100</span>. 
-                  This real-time score is derived from high-frequency market data fetched via AI search.
+                  This real-time score is derived from live market data sourced via FRED.
                 </p>
               </div>
 
@@ -178,7 +184,7 @@ const App: React.FC = () => {
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2 text-blue-400 font-semibold text-sm">
                     <Zap className="w-4 h-4 fill-current" />
-                    <span>Gemini Market Analysis</span>
+                    <span>ChatGPT Market Analysis</span>
                   </div>
                   {!aiAnalysis && (
                     <button 
@@ -200,7 +206,7 @@ const App: React.FC = () => {
                       <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:0.4s]" />
                     </div>
                   ) : !hasAiKey ? (
-                    "Set VITE_GEMINI_API_KEY in your Vercel environment to enable AI insights."
+                    "Set VITE_OPENAI_API_KEY in your environment to enable AI insights."
                   ) : (
                     "Fetch latest insights to see how current volatility spikes or yield curves affect your portfolio risk."
                   )}
@@ -215,7 +221,7 @@ const App: React.FC = () => {
                 </div>
                 <div className="flex-1 bg-slate-950/30 p-4 rounded-xl border border-slate-800">
                   <div className="text-slate-500 text-[10px] uppercase font-bold mb-1 tracking-widest">Data Integrity</div>
-                  <div className="text-white font-semibold text-sm">Grounding Enabled</div>
+                  <div className="text-white font-semibold text-sm">FRED Verified</div>
                   <div className="text-blue-400 text-xs mt-1">{data!.sources.length} citations found</div>
                 </div>
               </div>
@@ -245,7 +251,7 @@ const App: React.FC = () => {
           ))}
         </div>
 
-        {/* Evidence Section - Requirement for Google Search Tool */}
+        {/* Evidence Section - FRED Source Links */}
         <section className="mt-16 bg-slate-900/30 rounded-3xl p-8 border border-slate-800">
           <div className="flex items-center gap-3 mb-8">
             <div className="bg-slate-800 p-2 rounded-lg">
@@ -289,12 +295,12 @@ const App: React.FC = () => {
               <span>Investment Risk Warning</span>
             </div>
             <p className="text-slate-500 text-xs leading-relaxed">
-              Real-time data is fetched using automated AI search queries. While every effort is made to ensure accuracy, data may be delayed or subject to search engine indexing errors. This index is a quantitative experiment and does not constitute financial advice. Market risk is dynamic; never invest more than you can afford to lose.
+              Real-time data is fetched from the Federal Reserve Economic Data (FRED) service. While every effort is made to ensure accuracy, data may be delayed or revised by the source. This index is a quantitative experiment and does not constitute financial advice. Market risk is dynamic; never invest more than you can afford to lose.
             </p>
           </div>
           
           <div className="mt-8 text-slate-600 text-[10px] uppercase font-bold tracking-[0.2em]">
-            &copy; {new Date().getFullYear()} US Stock Risk Index &bull; AI-Powered Market Grounding
+            &copy; {new Date().getFullYear()} US Stock Risk Index &bull; FRED-Powered Market Grounding
           </div>
         </footer>
       </main>

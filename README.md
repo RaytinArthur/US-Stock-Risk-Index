@@ -15,6 +15,7 @@ View your app in AI Studio: https://ai.studio/apps/drive/1tBcWIqr_VaNP9w1BXfGh6O
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Set the `VITE_FRED_API_KEY` in [.env.local](.env.local) to your FRED API key (optional but recommended for higher limits)
+3. Set the `VITE_OPENAI_API_KEY` in [.env.local](.env.local) if you want AI analysis via ChatGPT
+4. Run the app:
    `npm run dev`
