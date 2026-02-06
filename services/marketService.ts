@@ -2,11 +2,33 @@
 import { RiskData, Indicator } from "../types";
 
 const fredApiKey = import.meta.env.VITE_FRED_API_KEY;
+const RISK_CACHE_KEY = 'us-stock-risk-index:last-successful-live-data';
 
-const MOCK_HISTORY = (val: number) => Array.from({ length: 30 }, (_, i) => ({
+const buildFlatHistory = (val: number) => Array.from({ length: 30 }, (_, i) => ({
   date: new Date(Date.now() - (30 - i) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-  value: Number((val * (0.95 + Math.random() * 0.1)).toFixed(2))
+  value: Number(val.toFixed(2))
 }));
+
+const loadCachedRiskData = (): RiskData | null => {
+  try {
+    const raw = localStorage.getItem(RISK_CACHE_KEY);
+    if (!raw) {
+      return null;
+    }
+    return JSON.parse(raw) as RiskData;
+  } catch (error) {
+    console.warn('Failed to load cached risk data', error);
+    return null;
+  }
+};
+
+const saveCachedRiskData = (data: RiskData) => {
+  try {
+    localStorage.setItem(RISK_CACHE_KEY, JSON.stringify(data));
+  } catch (error) {
+    console.warn('Failed to save cached risk data', error);
+  }
+};
 
 export const fetchRealMarketData = async (): Promise<RiskData> => {
   const seriesConfigs = [
@@ -47,7 +69,20 @@ export const fetchRealMarketData = async (): Promise<RiskData> => {
   const sources = results.flatMap(result => result.sources ?? []);
 
   if (sources.length === 0) {
-    return buildFallbackData("FRED API unavailable. Showing cached baseline metrics.");
+    const cached = loadCachedRiskData();
+    if (cached) {
+      return {
+        ...cached,
+        sources: [
+          {
+            title: `Live fetch failed. Showing last successful snapshot (${new Date(cached.lastUpdated).toLocaleString()}).`,
+            uri: 'https://fred.stlouisfed.org/'
+          },
+          ...cached.sources
+        ]
+      };
+    }
+    return buildFallbackData("Live APIs are currently unavailable. Waiting for the first successful daily fetch.");
   }
 
   if (failedSeries.length > 0) {
@@ -78,7 +113,7 @@ export const fetchRealMarketData = async (): Promise<RiskData> => {
       direction: 'higher_is_risky',
       description: 'Market expectation of 30-day forward volatility.',
       weight: 0.25,
-      history: results.find(result => result.config.key === 'vix')?.history ?? MOCK_HISTORY(values.vix),
+      history: results.find(result => result.config.key === 'vix')?.history ?? buildFlatHistory(values.vix),
       subScore: mapToSubScore(values.vix, 12, 35, 'higher_is_risky'),
       explanation: 'VIX measures the cost of S&P 500 options. Higher values signal investor fear.'
     },
@@ -91,7 +126,7 @@ export const fetchRealMarketData = async (): Promise<RiskData> => {
       direction: 'lower_is_risky',
       description: 'Difference between long and short term yields.',
       weight: 0.15,
-      history: results.find(result => result.config.key === 't10y2y')?.history ?? MOCK_HISTORY(values.t10y2y),
+      history: results.find(result => result.config.key === 't10y2y')?.history ?? buildFlatHistory(values.t10y2y),
       subScore: mapToSubScore(values.t10y2y, -0.5, 1.5, 'lower_is_risky'),
       explanation: 'Inverted yield curves (negative) are classic recession precursors.'
     },
@@ -104,7 +139,7 @@ export const fetchRealMarketData = async (): Promise<RiskData> => {
       direction: 'higher_is_risky',
       description: 'Risk premium on "junk" bonds.',
       weight: 0.20,
-      history: results.find(result => result.config.key === 'hy_oas')?.history ?? MOCK_HISTORY(values.hy_oas),
+      history: results.find(result => result.config.key === 'hy_oas')?.history ?? buildFlatHistory(values.hy_oas),
       subScore: mapToSubScore(values.hy_oas, 2.8, 6.5, 'higher_is_risky'),
       explanation: 'Widening credit spreads indicate tightening financial conditions and default risk.'
     },
@@ -117,7 +152,7 @@ export const fetchRealMarketData = async (): Promise<RiskData> => {
       direction: 'higher_is_risky',
       description: 'Price relative to trailing 12m earnings.',
       weight: 0.20,
-      history: results.find(result => result.config.key === 'pe')?.history ?? MOCK_HISTORY(values.pe),
+      history: results.find(result => result.config.key === 'pe')?.history ?? buildFlatHistory(values.pe),
       subScore: mapToSubScore(values.pe, 15, 26, 'higher_is_risky'),
       explanation: 'Valuations above 20x are historically high for the S&P 500.'
     },
@@ -130,7 +165,7 @@ export const fetchRealMarketData = async (): Promise<RiskData> => {
       direction: 'higher_is_risky',
       description: 'Options volume ratio.',
       weight: 0.10,
-      history: results.find(result => result.config.key === 'pc')?.history ?? MOCK_HISTORY(values.pc),
+      history: results.find(result => result.config.key === 'pc')?.history ?? buildFlatHistory(values.pc),
       subScore: mapToSubScore(values.pc, 0.6, 1.2, 'higher_is_risky'),
       explanation: 'A high ratio shows bearish sentiment; an extremely low ratio suggests bubble territory.'
     },
@@ -143,13 +178,15 @@ export const fetchRealMarketData = async (): Promise<RiskData> => {
       direction: 'higher_is_risky',
       description: 'Interbank credit risk measure.',
       weight: 0.10,
-      history: results.find(result => result.config.key === 'ted')?.history ?? MOCK_HISTORY(values.ted),
+      history: results.find(result => result.config.key === 'ted')?.history ?? buildFlatHistory(values.ted),
       subScore: mapToSubScore(values.ted, 0.1, 0.8, 'higher_is_risky'),
       explanation: 'Spikes in TED spread signal liquidity stress in the banking sector.'
     }
   ];
 
-  return buildRiskPayload(indicators, sources);
+  const payload = buildRiskPayload(indicators, sources);
+  saveCachedRiskData(payload);
+  return payload;
 };
 
 const buildRiskPayload = (indicators: Indicator[], sources: { title: string; uri: string }[]): RiskData => {
@@ -178,7 +215,7 @@ const buildFallbackData = (note: string): RiskData => {
       direction: 'higher_is_risky',
       description: 'Market expectation of 30-day forward volatility.',
       weight: 0.25,
-      history: MOCK_HISTORY(16.2),
+      history: buildFlatHistory(16.2),
       subScore: 20,
       explanation: 'Fallback data when live metrics are unavailable.'
     },
@@ -191,7 +228,7 @@ const buildFallbackData = (note: string): RiskData => {
       direction: 'lower_is_risky',
       description: 'Difference between long and short term yields.',
       weight: 0.15,
-      history: MOCK_HISTORY(0.2),
+      history: buildFlatHistory(0.2),
       subScore: 50,
       explanation: 'Fallback data when live metrics are unavailable.'
     },
@@ -204,7 +241,7 @@ const buildFallbackData = (note: string): RiskData => {
       direction: 'higher_is_risky',
       description: 'Risk premium on "junk" bonds.',
       weight: 0.20,
-      history: MOCK_HISTORY(3.5),
+      history: buildFlatHistory(3.5),
       subScore: 30,
       explanation: 'Fallback data when live metrics are unavailable.'
     },
@@ -217,7 +254,7 @@ const buildFallbackData = (note: string): RiskData => {
       direction: 'higher_is_risky',
       description: 'Price relative to trailing 12m earnings.',
       weight: 0.20,
-      history: MOCK_HISTORY(20.8),
+      history: buildFlatHistory(20.8),
       subScore: 55,
       explanation: 'Fallback data when live metrics are unavailable.'
     },
@@ -230,7 +267,7 @@ const buildFallbackData = (note: string): RiskData => {
       direction: 'higher_is_risky',
       description: 'Options volume ratio.',
       weight: 0.10,
-      history: MOCK_HISTORY(0.9),
+      history: buildFlatHistory(0.9),
       subScore: 45,
       explanation: 'Fallback data when live metrics are unavailable.'
     },
@@ -243,7 +280,7 @@ const buildFallbackData = (note: string): RiskData => {
       direction: 'higher_is_risky',
       description: 'Interbank credit risk measure.',
       weight: 0.10,
-      history: MOCK_HISTORY(0.25),
+      history: buildFlatHistory(0.25),
       subScore: 35,
       explanation: 'Fallback data when live metrics are unavailable.'
     }
@@ -315,7 +352,7 @@ const parseObservationValue = (value: string): number | null => {
 
 const fetchFredSeries = async (seriesId: string, fallbackValue: number): Promise<FredSeriesResult> => {
   try {
-    const data = await fetchJsonWithProxy(buildFredUrl(seriesId, 30));
+    const data = await fetchJsonWithProxy(buildFredUrl(seriesId, 90));
     const observations = Array.isArray(data.observations) ? data.observations : [];
     const validObservations = observations
       .map((obs: { date: string; value: string }) => ({
@@ -343,7 +380,7 @@ const fetchFredSeries = async (seriesId: string, fallbackValue: number): Promise
     console.error("FRED request failed:", error);
     return {
       value: fallbackValue,
-      history: MOCK_HISTORY(fallbackValue),
+      history: buildFlatHistory(fallbackValue),
       failed: true
     };
   }
@@ -436,7 +473,7 @@ const fetchVixSeries = async (seriesId: string, fallbackValue: number): Promise<
 
   return {
     value,
-    history: fredResult.failed ? MOCK_HISTORY(value) : fredResult.history,
+    history: fredResult.failed ? buildFlatHistory(value) : fredResult.history,
     failed: fredResult.failed && !realtimeVix,
     sources
   };
