@@ -22,6 +22,24 @@ const loadCachedRiskData = (): RiskData | null => {
   }
 };
 
+
+const fetchRiskDataFromApiRoute = async (): Promise<RiskData | null> => {
+  try {
+    const response = await fetch('/api/risk');
+    if (!response.ok) {
+      return null;
+    }
+    const payload = await response.json() as RiskData;
+    if (!payload?.indicators?.length) {
+      return null;
+    }
+    return payload;
+  } catch (error) {
+    console.warn('Failed to fetch from /api/risk route, falling back to browser data pipeline', error);
+    return null;
+  }
+};
+
 const saveCachedRiskData = (data: RiskData) => {
   try {
     localStorage.setItem(RISK_CACHE_KEY, JSON.stringify(data));
@@ -31,6 +49,12 @@ const saveCachedRiskData = (data: RiskData) => {
 };
 
 export const fetchRealMarketData = async (): Promise<RiskData> => {
+  const serverPayload = await fetchRiskDataFromApiRoute();
+  if (serverPayload) {
+    saveCachedRiskData(serverPayload);
+    return serverPayload;
+  }
+
   const seriesConfigs = [
     { key: 'vix', seriesId: 'VIXCLS', label: 'CBOE Volatility Index (VIX)', fallback: 16.2 },
     { key: 't10y2y', seriesId: 'T10Y2Y', label: '10-Year minus 2-Year Treasury Yield Spread', fallback: 0.2 },
